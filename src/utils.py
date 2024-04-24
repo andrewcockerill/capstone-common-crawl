@@ -134,8 +134,6 @@ class DownloadManager:
             if self.logger:
                 self.logger.info("started download of CC data files")
             for k, v in cc_sample_indices.items():
-                if self.logger:
-                    self.logger.info("started download of CC data files")
                 urls = url_dict[k]
                 for elem in v:
                     url = urls[elem]

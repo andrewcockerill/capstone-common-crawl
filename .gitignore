@@ -1,6 +1,8 @@
 # Data files
 data/*.json
 data/*.csv
+data/*.gz
+data/*.warc
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
