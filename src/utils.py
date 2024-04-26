@@ -12,7 +12,7 @@ import tqdm
 
 
 class DownloadManager:
-    """Class to house multiple methods
+    """Class to house multiple methods for obtaining WARC archive URLs and downloading of actual files.
 
     Attributes
     ----------
@@ -83,9 +83,14 @@ class DownloadManager:
         return list(zip(cc_indices, gz_urls))
 
     def _decompress_path_zip(self, url):
-        # Request a Common Crawl index zip file URL and unpack to a list
-        zip_file = requests.get(url).content
-        return [f"{self.data_url}{i}" for i in gzip.decompress(zip_file).strip().decode('utf-8').split()]
+        try:
+            # Request a Common Crawl index zip file URL and unpack to a list
+            zip_file = requests.get(url).content
+            return [f"{self.data_url}{i}" for i in gzip.decompress(zip_file).strip().decode('utf-8').split()]
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f'unexpected error in zip decompression for {url}')
+                self.logger.error(e)
 
     def get_warc_urls(self, output_dir, year_start=2020, year_end=None):
         # Construct URL catalogs and catalog metadata
@@ -108,6 +113,7 @@ class DownloadManager:
                 self.logger.info('finished fetch of indices and path zips')
         except Exception as e:
             if self.logger:
+                self.logger('unexpected error when downloading warc urls')
                 self.logger.error(e)
 
     def download_sample(self, output_dir, url_json_loc, url_json_metadata_loc, num_files=1, seed=1):
@@ -152,4 +158,5 @@ class DownloadManager:
                 print('Finished!')
         except Exception as e:
             if self.logger:
+                self.logger('unexpected error when downloading warc files')
                 self.logger.error(e)
