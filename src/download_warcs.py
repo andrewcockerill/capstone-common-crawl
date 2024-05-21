@@ -4,11 +4,16 @@ import argparse
 from utils import DownloadManager
 import re
 import logging
+from pyspark import SparkContext, SparkConf
+from pyspark.sql import SparkSession
+import json
 
 # Constants
-OUTPUT_DIR = "../data"
-JSON_LOC = os.path.join(OUTPUT_DIR, "warc_urls.json")
-JSON_META_LOC = os.path.join(OUTPUT_DIR, "warc_urls_meta.json")
+JSON_PATH = "../data/json"
+WARC_PATH = "../data/warc"
+FILES_PER_CRAWL = 1
+MAX_FILES_TOTAL = 10
+N_WORKERS = 2
 
 # Logging
 logger = logging.getLogger('download_warcs')
@@ -19,23 +24,19 @@ fh = logging.FileHandler('../logs/download_warcs.log')
 fh.setFormatter(formatter)
 logger.addHandler(fh)
 
-# Args
-parser = argparse.ArgumentParser()
-parser.add_argument("-n", "--numfiles")
-parser.add_argument("-s", "--seed")
-args = parser.parse_args()
+# Spark Setup
+sc = SparkContext()
+spark = SparkSession(sc)
 
-# Downloads
-if not args.numfiles:
-    numfiles = 1
-else:
-    numfiles = int(args.numfiles)
+dm = DownloadManager(json_path=JSON_PATH, warc_path=WARC_PATH, 
+                     max_files_per_crawl=FILES_PER_CRAWL, max_files_total=MAX_FILES_TOTAL, logger=logger)
+dm.get_warc_urls()
 
-if not args.seed:
-    seed = 1
-else:
-    seed = int(args.seed)
+file_list = dm.get_download_queue()
 
-dm = DownloadManager(logger=logger)
-dm.download_sample(output_dir=OUTPUT_DIR, url_json_loc=JSON_LOC,
-                   url_json_metadata_loc=JSON_META_LOC, num_files=numfiles, seed=seed)
+if len(file_list) > 0:
+    file_list_rdd = sc.parallelize(file_list, N_WORKERS)
+    dm.download_warc_list(file_list_rdd)
+    dm.cleanup_queue()
+
+sc.stop()

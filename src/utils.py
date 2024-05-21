@@ -36,13 +36,18 @@ class DownloadManager:
 
     """
 
-    def __init__(self, logger=None):
+    def __init__(self, json_path, warc_path, max_files_per_crawl=1, max_files_total=10, logger=None):
         self.logger = logger
+        self.json_link_file = os.path.join(json_path, 'warc_urls.json')
+        self.json_metadata_file = os.path.join(json_path, 'warc_urls_meta.json')
+        self.json_to_download = os.path.join(json_path, 'warcs_to_download.json')
+        self.warc_path = warc_path
         self._overview_url = r"https://commoncrawl.org/overview"
         self._data_url = r"https://data.commoncrawl.org/"
         self._data_path = r"crawl-data/"
         self._warc_ext = r"warc.paths.gz"
-        self._max_files_download = 10
+        self._max_files_per_crawl = max_files_per_crawl
+        self._max_files_total = 10
 
     @property
     def overview_url(self):
@@ -59,16 +64,32 @@ class DownloadManager:
     @property
     def warc_ext(self):
         return self._warc_ext
-
+    
     @property
-    def max_files_download(self):
-        return self._max_files_download
+    def max_files_per_crawl(self):
+        return self._max_files_per_crawl
+    
+    @property
+    def max_files_total(self):
+        return self._max_files_total
+    
+    def _check_json(self):
+        # Check to see if JSON URL and Metadata files exist; if not, create them
+        for filename in [self.json_link_file, self.json_metadata_file]:
+            if not os.path.exists(filename):
+                with open(filename, 'w') as f:
+                    json.dump({}, f)
 
-    def _fetch_path_zips(self, year_start=2020, year_end=None):
+    def _fetch_path_zips(self, year_start=None, year_end=None):
         # Establish years to collect data
-        year_start = int(year_start)
+        if year_start is None:
+            year_start = int(datetime.datetime.now().year)
+        else:
+            year_start = int(year_start)
         if year_end is None:
             year_end = int(datetime.datetime.now().year)
+        else:
+            year_end = int(year_end)
         assert year_start <= year_end, 'end year must be > start year'
         year_regex = '|'.join([str(y) for y in range(year_start, year_end+1)])
 
@@ -77,6 +98,12 @@ class DownloadManager:
         self.soup = BeautifulSoup(html_content, features='html.parser')
         cc_indices = [str(s.contents[0]) for s in self.soup.find_all(
             'h6') if bool(re.search(year_regex, str(s.contents[0])))]
+        
+        # Check if crawls have been found and logged previously, then update
+        self._check_json()
+        with open(self.json_metadata_file) as f:
+            known_crawls = [i for i in json.load(f).keys()]
+        cc_indices = [i for i in cc_indices if i not in known_crawls]
 
         gz_urls = [
             f"{self.data_url}{self.data_path}{ind}/{self.warc_ext}" for ind in cc_indices]
@@ -92,23 +119,37 @@ class DownloadManager:
                 self.logger.error(f'unexpected error in zip decompression for {url}')
                 self.logger.error(e)
 
-    def get_warc_urls(self, output_dir, year_start=2020, year_end=None):
+    def get_warc_urls(self, year_start=None, year_end=None):
         # Construct URL catalogs and catalog metadata
         try:
             if self.logger:
                 self.logger.info('started fetch of indices and path zips')
             path_zips = self._fetch_path_zips(
                 year_start=year_start, year_end=year_end)
-            output_json = {i[0]: self._decompress_path_zip(i[1])
+            new_links = {i[0]: self._decompress_path_zip(i[1])
                            for i in path_zips}
-            output_json_meta = {k: len(v) for k, v in output_json.items()}
+            new_metadata = {k: len(v) for k, v in new_links.items()}
 
-            with open(os.path.join(output_dir, 'warc_urls.json'), 'w') as output:
-                json.dump(output_json, output)
+            if len(new_metadata) > 0:
+                # Update link file
+                with open(self.json_link_file, 'r') as f:
+                    current_links = json.load(f)
+                current_links.update(new_links)
+                with open(self.json_link_file, 'w') as f:
+                    json.dump(current_links, f)
 
-            with open(os.path.join(output_dir, 'warc_urls_meta.json'), 'w') as output_meta:
-                json.dump(output_json_meta, output_meta)
+                # Update metadata
+                with open(self.json_metadata_file, 'r') as f:
+                    current_metadata = json.load(f)
+                current_metadata.update(new_metadata)
+                with open(self.json_metadata_file, 'w') as f:
+                    json.dump(current_metadata, f)
 
+                # Update files planned for download
+                with open(self.json_to_download, 'w') as f:
+                    to_download = {i:j[0:self.max_files_per_crawl] for i,j in new_links.items()}
+                    json.dump(to_download, f)
+                
             if self.logger:
                 self.logger.info('finished fetch of indices and path zips')
         except Exception as e:
@@ -116,47 +157,40 @@ class DownloadManager:
                 self.logger('unexpected error when downloading warc urls')
                 self.logger.error(e)
 
-    def download_sample(self, output_dir, url_json_loc, url_json_metadata_loc, num_files=1, seed=1):
-        # Download sampling of files from established catalog
+    def get_download_queue(self):
+        with open(self.json_to_download, 'r') as f:
+            to_download = json.load(f)
+            file_list = [i for j in to_download.values() for i in j][0:self.max_files_total]
+        return file_list
+
+    def _download_warc(self, url):
+        # Download WARC from a URL
+        outfile = os.path.join(self.warc_path, re.sub(".*/", "", url))
+        r = requests.get(url, stream=True)
+        block_size = 1024
+        with open(outfile, "wb") as file:
+            for data in r.iter_content(block_size):
+                #progress_bar.update(len(data))
+                file.write(data)
+
+    def download_warc_list(self, url_rdd):
+        # Download WARCs from a list of URLs
+        if self.logger:
+            self.logger.info(f"started download of URL list")
         try:
-            # Limit number of files to download
-            num_files = min(int(num_files), self.max_files_download)
-
-            # Load catalogs
-            with open(url_json_loc) as f:
-                url_dict = json.loads(f.read())
-
-            with open(url_json_metadata_loc) as f:
-                url_metadata_dict = json.loads(f.read())
-
-            # Random sampling
-            np.random.seed(seed)
-            cc_sample_sizes = dict(Counter(np.random.choice(
-                list(url_metadata_dict.keys()), size=num_files, replace=True)))
-            cc_sample_indices = {k: np.random.choice(
-                url_metadata_dict[k], size=v, replace=False).tolist() for k, v in cc_sample_sizes.items()}
-
-            # Download
-            if self.logger:
-                self.logger.info("started download of CC data files")
-            for k, v in cc_sample_indices.items():
-                urls = url_dict[k]
-                for elem in v:
-                    url = urls[elem]
-                    print(f"Downloading {url}:")
-                    outfile = os.path.join(output_dir, re.sub(".*/", "", url))
-                    r = requests.get(url, stream=True)
-                    total_size = int(r.headers.get("content-length", 0))
-                    block_size = 1024
-                    with tqdm.tqdm(total=total_size, unit="B", unit_scale=True) as progress_bar:
-                        with open(outfile, "wb") as file:
-                            for data in r.iter_content(block_size):
-                                progress_bar.update(len(data))
-                                file.write(data)
-                    if self.logger:
-                        self.logger.info(f"downloaded {url}")
-                print('Finished!')
+            results = url_rdd.foreach(lambda x: self._download_warc(x)).collect()
         except Exception as e:
             if self.logger:
-                self.logger('unexpected error when downloading warc files')
+                self.logger.error('unexpected error when downloading warc files')
                 self.logger.error(e)
+        if self.logger:
+            self.logger.info(f"finished download of URL list")
+
+    def cleanup_queue(self):
+        # Empty the queue of files to download
+        if self.logger:
+            self.logger.info(f"started cleanup of queue")
+        with open(self.json_to_download, 'w') as f:
+            json.dump({}, f)
+        if self.logger:
+            self.logger.info(f"finished cleanup of queue")
