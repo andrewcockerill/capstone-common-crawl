@@ -3,27 +3,18 @@ This repository houses all code for a capstone project for the WashU/Springboard
 
 This Readme can be referenced to to reproduce this work in which a *sample* of the Common Crawl data (which is petabytes in size) is extracted, transformed, and loaded into a data warehouse environment.
 
-## Data Acquisition
-WARC files can be downloaded locally by means of two scripts contained within the project's <tt>src</tt> directory. To begin, the user should determine the span of years they would like to ingest data from, as well as the number of files they would like to ingest. At the moment, requests to the Common Crawl dataset is limited at 10 files per run.
+## Data Acquisition, Transform, and Loading Process
+The current pipeline prototype leverage two Python scripts executed via <tt>spark-submit</tt>. These are planned to be included as part of an orchestration pipeline that executes these tasks sequentially. The general workflow follows this format:
 
-To download data, the user must first construct a data catalog that contains all the URLs of the zipped WARC files (the full dataset contains hundreds of thousands of URLs). From here, a random sampling of data can then be ingested via the following steps:
+![workflow](docs/workflow.png)
 
-1) Run <tt>build_catalog.py</tt> from the terminal. This can be done in the following manner:
-```sh
-python build_catalog.py --start A --end B
-```
+1) <tt>download_warcs.py</tt> will scrape the Common Crawl website to establish crawls that are available for the current year (this can be adjusted by the user to pull previous years). This populates <tt>.json</tt> files with a listing of all URLs available for download for that crawl. Any newly found crawls are queued for ingestion in <tt>warcs_to_download.json</tt>.
 
-Where A is the year to start getting data from, and B is the year to end getting data from. This allows for the offline storage of the relatively large data catalog that will be generated when looking at multiple years.
+This script will then download all new URLs in the queue. The project currently caps the number of downloads to 1 URL per crawl, with an absolute maximum of 10 downloads per run. After downloads are complete, the queue file is emptied.
 
-2) Run <tt>download_warcs.py</tt> in the following way:
-```sh
-python download_warcs.py --numfiles A --seed B
-```
+2) <tt>transform_load.py</tt> will then extract necessary contents from all downloaded WARCs, and convert these into Spark DataFrames. Integer IDs will also be generated for additional tables that are created for normalization (the WARC records themselves already have a unique identifier). The outputs are currently in <tt>.parquet</tt> format, using the following schema:
 
-Where A is the number of files to download (capped at 10 per run) and B is a random seed for reproducibily of random file sampling.
+![schema](docs/schema.png)
 
-When complete the data catalog and zipped WARC files will be saved to the <tt>data</tt> folder, whose contents should be masked via the <tt>.gitignore</tt>.
-
-Example:
-
-![example_data_acquisition](docs/example_data_acquisition.png)
+## To Do
+This pipeline is currently a prototype in review. Next steps will involve implementing this in a cloud environment to allow for ingestion of a larger number of files.
