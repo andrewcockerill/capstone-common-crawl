@@ -1,12 +1,8 @@
 # Packages
-import os
-import argparse
 from utils import DownloadManager
-import re
 import logging
 from pyspark import SparkContext, SparkConf
 from pyspark.sql import SparkSession
-import json
 
 # Constants
 JSON_PATH = "../data/json"
@@ -28,6 +24,8 @@ logger.addHandler(fh)
 sc = SparkContext()
 spark = SparkSession(sc)
 
+logger.info('app started')
+
 dm = DownloadManager(json_path=JSON_PATH, warc_path=WARC_PATH, 
                      max_files_per_crawl=FILES_PER_CRAWL, max_files_total=MAX_FILES_TOTAL, logger=logger)
 dm.get_warc_urls()
@@ -39,4 +37,7 @@ if len(file_list) > 0:
     dm.download_warc_list(file_list_rdd)
     dm.cleanup_queue()
 
+logger.info('app ended')
+
 sc.stop()
+spark.stop()
