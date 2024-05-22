@@ -3,6 +3,10 @@
 *.csv
 *.gz
 *.warc
+data/parquet/*/
+
+# Testing notebook
+notebooks/testing.ipynb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
